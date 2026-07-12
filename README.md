@@ -1,0 +1,1 @@
+Using Lamba to send trigger to SNS
