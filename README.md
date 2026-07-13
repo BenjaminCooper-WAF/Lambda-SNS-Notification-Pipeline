@@ -1,1 +1,1 @@
-Using Lamba to send trigger to SNS
+Execution process - To be added shortly. 

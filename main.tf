@@ -80,6 +80,7 @@ data "archive_file" "lambda_package" {
   output_path = "${path.module}/lambda_function.zip"
 }
 
+
 resource "aws_lambda_function" "sns_publisher" {
   function_name = "lambda-to-sns-publisher"
   role          = aws_iam_role.lambda_role.arn
