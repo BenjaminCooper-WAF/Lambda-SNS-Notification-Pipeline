@@ -10,9 +10,12 @@
 
 ## Mission Objective
 
-* Stand up a fully serverless, Terraform-defined pipeline where an **AWS Lambda** function behind a public **Function URL** publishes to an **Amazon SNS** topic that emails every confirmed subscriber, secured by least-privilege **IAM** and traced end-to-end in **CloudWatch Logs**.
+* Build a serverless, event-driven notification pipeline on AWS. A Python **AWS Lambda** function publishes to an **Amazon SNS** topic, which emails every confirmed subscriber. **Terraform** defines the core infrastructure, **IAM** gives the function only the permissions it needs, and every run is traced in **CloudWatch Logs**.
+* **Skills shown:** Infrastructure as Code, serverless compute, least-privilege IAM, event-driven (pub/sub) design, observability and cost-aware cleanup.
 
 ## Architecture
+
+![Lambda to SNS architecture: Terraform deploys an IAM role, Lambda function, SNS topic and CloudWatch logging in eu-west-2](Images/00-architecture.png "Architecture overview")
 
 ```mermaid
 flowchart LR
@@ -23,44 +26,42 @@ flowchart LR
     D -->|email| F([Subscriber Inbox])
 ```
 
-Everything above — the topic, the IAM role/policy, and the function itself — is defined as code in [`main.tf`](main.tf) and provisioned with a single `terraform apply`.
+Terraform manages the SNS topic, the IAM role and policy, and the Lambda function in `eu-west-2` (London). The code is split into separate files for providers, SNS, IAM, Lambda and outputs. I set up the Function URL and the email subscription in the AWS console for testing.
 
 ## Checkpoints
 
 1. [Prerequisites](#prerequisites)
-2. [Project Structure](#project-structure)
-3. [Step-1: Provision the SNS Topic & IAM Role](#step-1-provision-the-sns-topic--iam-role)
-4. [Step-2: Package & Deploy the Lambda Function](#step-2-package--deploy-the-lambda-function)
-5. [Step-3: Expose & Trigger the Function URL](#step-3-expose--trigger-the-function-url)
-6. [Step-4: Verify Execution in CloudWatch](#step-4-verify-execution-in-cloudwatch)
-7. [Step-5: Subscribe & Confirm Email Delivery](#step-5-subscribe--confirm-email-delivery)
-8. [Step-6: Live Notifications](#step-6-live-notifications)
-9. [Errors](#errors)
-10. [Deliverables](#deliverables)
-11. [Teardown](#final-step---teardown)
-12. [Author](#author)
+2. [Step-1: Provision the SNS Topic & IAM Role](#step-1-provision-the-sns-topic--iam-role)
+3. [Step-2: Package & Deploy the Lambda Function](#step-2-package--deploy-the-lambda-function)
+4. [Step-3: Expose & Trigger the Function URL](#step-3-expose--trigger-the-function-url)
+5. [Step-4: Verify Execution in CloudWatch](#step-4-verify-execution-in-cloudwatch)
+6. [Step-5: Subscribe & Confirm Email Delivery](#step-5-subscribe--confirm-email-delivery)
+7. [Step-6: Live Notifications](#step-6-live-notifications)
+8. [Errors](#errors)
+9. [Deliverables](#deliverables)
+10. [Teardown](#teardown)
+11. [Author](#author)
+12. [License](#license)
 
 ## Prerequisites
 
-* An AWS account with console + CLI access
+* An AWS account with console and CLI access
 * [Terraform](https://developer.hashicorp.com/terraform/downloads) `>= 1.5.0`
 * Visual Studio Code (or any editor)
 * Python 3.12 (matches the Lambda runtime)
 * Patience & lots of coffee
 
-
-
 ## Step-1 (Provision the SNS Topic & IAM Role)
 
-`main.tf` creates the `aws_sns_topic` that will fan out notifications, plus an `aws_iam_role` scoped to exactly two things: writing CloudWatch logs and publishing to that one topic.
+Terraform creates the SNS topic and an IAM role that only the Lambda service can assume. The role can do two things: write its own logs and publish to this one topic.
 
 ![SNS topic created successfully](Images/topiccreation.jpg "SNS topic created")
 
-![IAM role with AmazonSNSFullAccess and AWSLambdaBasicExecution policies attached](Images/roles.jpg "IAM role permissions")
+![IAM role for the Lambda function](Images/roles.jpg "IAM role permissions")
 
 ## Step-2 (Package & Deploy the Lambda Function)
 
-Terraform's `archive_file` data source zips [`lambda_function.py`](lambda_function.py) and deploys it as a Python 3.12 Lambda. The function reads the topic ARN from an environment variable and publishes a JSON payload on every invocation.
+Terraform zips `lambda_function.py` and deploys it as a Python 3.12 function, and redeploys it whenever the code changes. The function reads the topic ARN from an environment variable set by Terraform, so no ARN is hard-coded. On each run it publishes a JSON message with the subject "Lambda Notification", including the event that triggered it.
 
 ![Lambda function deployed with source code visible in the console editor](Images/Lambascript.jpg "Lambda function code")
 
@@ -68,21 +69,21 @@ Terraform's `archive_file` data source zips [`lambda_function.py`](lambda_functi
 
 ## Step-3 (Expose & Trigger the Function URL)
 
-A public Function URL turns the Lambda into a one-click HTTP trigger — handy for testing without needing API Gateway or the CLI.
+A Lambda Function URL turns the function into an HTTPS endpoint, so I could test it from a browser without setting up API Gateway.
 
-![Function URL enabled with auth type NONE](Images/Functionurl.jpg "Function URL")
+![Function URL enabled on the Lambda](Images/Functionurl.jpg "Function URL")
 
 ![JSON response returned after invoking the Function URL](Images/Messageprint.jpg "Invocation response")
 
 ## Step-4 (Verify Execution in CloudWatch)
 
-Every invocation is traced end-to-end in CloudWatch Logs — the `sns.publish()` response (including the returned `MessageId`), plus the billed duration and memory usage.
+I checked every run in CloudWatch Logs: the SNS publish response (including the `MessageId`), plus how long it ran and how much memory it used.
 
 ![CloudWatch log stream showing successful publishResult entries](Images/Cloudwatchlogs.jpg "CloudWatch logs")
 
 ## Step-5 (Subscribe & Confirm Email Delivery)
 
-Before a subscriber can receive anything, SNS sends a confirmation link. Once it's clicked, the subscription flips to `Confirmed` and the topic is ready to deliver.
+SNS only delivers to subscribers who opt in. After I clicked the confirmation link, the subscription changed to `Confirmed` and the topic was ready to deliver.
 
 ![SNS subscription confirmation email in Gmail](Images/Subscription.jpg "Confirmation email")
 
@@ -92,7 +93,7 @@ Before a subscriber can receive anything, SNS sends a confirmation link. Once it
 
 ## Step-6 (Live Notifications)
 
-With the subscription active, every Function URL hit results in a real email notification, timestamped by the Lambda at invocation time.
+Each time the function runs, an email with a timestamp arrives, which confirms the whole Lambda → SNS → inbox path works.
 
 ![Email notification with Lambda invocation timestamp](Images/Lambainvoked.jpg "Notification email")
 
@@ -100,14 +101,14 @@ With the subscription active, every Function URL hit results in a real email not
 
 ## Errors
 
-* `AccessDenied` on `sns:Publish` — the IAM policy's `Resource` must match the topic's ARN exactly; double-check region/account ID.
-* Function URL returns `{"Message":null}` — this is CloudFront/API Gateway's default 200 response body when the Lambda return value doesn't map cleanly to the console's raw view; check CloudWatch Logs for the real `publishResult`, not the browser output.
-* No email arrives — the subscription is still `PendingConfirmation`; check spam/junk for the confirmation email and click the link before testing again.
+* **`AccessDenied` on `sns:Publish`.** The policy is scoped to one topic, so the resource ARN has to match exactly (region, account and topic name). I fixed it by using Terraform's reference to the topic ARN instead of typing the ARN by hand.
+* **The browser response didn't show the real result.** The raw Function URL output was misleading. I used the CloudWatch logs, which show the actual SNS publish result, to confirm it worked.
+* **No emails arrived.** The subscription was still `PendingConfirmation`. SNS doesn't deliver until the subscriber clicks the confirmation link (it had gone to spam).
 
 ## Deliverables
 
-* A working, fully Terraform-managed serverless pipeline: Lambda → SNS → Email, with least-privilege IAM and CloudWatch observability.
-* Screenshots of every stage captured for the record — see the [`Images/`](Images) folder.
+* A working serverless pipeline (Lambda → SNS → Email), with the core infrastructure in Terraform, least-privilege IAM and CloudWatch logging.
+* Screenshots of every stage in the [`Images/`](Images) folder.
 * Congrats, you have successfully completed your mission and are now ready for more pain.
 
 ## Teardown
@@ -118,10 +119,15 @@ Unless you can print your own money, you will need to tear down your deployment.
 terraform destroy
 ```
 
-* You will be asked to confirm deletion — say yes.
-* Double check your AWS console that the SNS topic, IAM role, and Lambda function are gone.
-* Triple check everything — Jeff Bezos has enough money.
+* You will be asked to confirm deletion. Say yes.
+* Double check in the AWS console that the SNS topic, IAM role and Lambda function are gone.
+* Lambda creates the CloudWatch log group `/aws/lambda/lambda-to-sns-publisher` when it runs, so `terraform destroy` leaves it behind. Delete it manually.
+* Triple check everything. Jeff Bezos has enough money.
 
 ## Author
 
 **Benjamin Cooper**
+
+## License
+
+Licensed under the Apache License 2.0. See [`LICENSE.md`](LICENSE.md).
