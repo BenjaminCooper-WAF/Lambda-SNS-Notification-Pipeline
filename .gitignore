@@ -1,7 +1,6 @@
 .terraform/
 *.tfstate
 *.tfstate.*
+*.tfvars
+lambda_function.zip
 crash.log
-crash.*.log
-*.tfplan
-.terraform.tfstate.lock.info
